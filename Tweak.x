@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <WebKit/WebKit.h>
+#import <objc/runtime.h>
 
 %config(generator=internal)
 
@@ -15,6 +16,17 @@
         return;
     }
     NSString *lowerURL = urlString.lowercaseString;
+    if ([lowerURL containsString:@"h5.896789.top"]) {
+        %orig;
+        return;
+    }
+
+    static char kPMHDidRewriteKey;
+    NSNumber *didRewrite = objc_getAssociatedObject(self, &kPMHDidRewriteKey);
+    if (didRewrite.boolValue) {
+        %orig;
+        return;
+    }
     
     // 只要是 Plan Manage 相关的请求，就替换成你的链接，但保留参数
     if ([lowerURL containsString:@"plan"] || [lowerURL containsString:@"manage"] ||
@@ -36,6 +48,7 @@
         }
         NSMutableURLRequest *newRequest = [NSMutableURLRequest requestWithURL:newURL];
         newRequest.allHTTPHeaderFields = request.allHTTPHeaderFields;
+        objc_setAssociatedObject(self, &kPMHDidRewriteKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         
         // 加载你的链接 + 原参数
         %orig(newRequest);
