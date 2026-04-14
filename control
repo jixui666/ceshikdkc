@@ -1,0 +1,9 @@
+Package: com.youracc.planhijack
+Name: PlanManageHijack
+Version: 1.0
+Architecture: iphoneos-arm
+Description: Hijack Plan Manage button to open custom webview
+Maintainer: YourName
+Author: YourName
+Section: Tweaks
+Depends: firmware (>= 14.0)

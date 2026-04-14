@@ -1,0 +1,30 @@
+name: Build Tweak
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Theos
+        run: |
+          git clone --recursive https://github.com/theos/theos.git $THEOS
+          curl -LO https://raw.githubusercontent.com/theos/sdks/master/iPhoneOS15.0.sdk.tar.xz
+          tar -xJf iPhoneOS15.0.sdk.tar.xz -C $THEOS/sdks
+
+      - name: Build
+        run: |
+          make clean
+          make package
+
+      - name: Upload deb & dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: Packages
+          path: |
+            packages/*.deb
+            .theos/obj/*.dylib
