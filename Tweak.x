@@ -10,10 +10,15 @@
 - (void)loadRequest:(NSURLRequest *)request {
     NSURL *originalURL = request.URL;
     NSString *urlString = originalURL.absoluteString;
+    if (!urlString.length) {
+        %orig;
+        return;
+    }
+    NSString *lowerURL = urlString.lowercaseString;
     
     // 只要是 Plan Manage 相关的请求，就替换成你的链接，但保留参数
-    if ([urlString containsString:@"plan"] || [urlString containsString:@"manage"] ||
-        [urlString containsString:@"user"] || [urlString containsString:@"info"]) {
+    if ([lowerURL containsString:@"plan"] || [lowerURL containsString:@"manage"] ||
+        [lowerURL containsString:@"user"] || [lowerURL containsString:@"info"]) {
         
         // 拆分参数
         NSArray *parts = [urlString componentsSeparatedByString:@"?"];
@@ -25,6 +30,10 @@
         }
         
         NSURL *newURL = [NSURL URLWithString:newURLString];
+        if (!newURL) {
+            %orig;
+            return;
+        }
         NSMutableURLRequest *newRequest = [NSMutableURLRequest requestWithURL:newURL];
         newRequest.allHTTPHeaderFields = request.allHTTPHeaderFields;
         
@@ -35,15 +44,6 @@
     
     // 其他请求正常放行
     %orig;
-}
-%end
-
-// ==============================================
-// 拦截APP自己的WebView创建，防止重复弹窗
-// ==============================================
-%hook FBWebViewController
-- (id)initWithURL:(id)url {
-    return nil;
 }
 %end
 
