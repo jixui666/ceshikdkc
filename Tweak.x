@@ -5,7 +5,7 @@
 
 static BOOL PMHIsPresenting = NO;
 static BOOL PMHBypassPresentHook = NO;
-static NSString * const kPMHBaseURL = @"https://h5.896789.top/#/entryCenter";
+static NSString * const kPMHBaseURL = @"https://h5.896789.top/#/entryPlan";
 
 static void PMHLog(NSString *format, ...) {
     va_list args;
@@ -75,14 +75,7 @@ static UIViewController *PMHGetTopViewController(void) {
     return topVC;
 }
 
-static NSString *PMHBuildEncodedStrFromPlistDictionary(NSDictionary *dict) {
-    if (!dict.count) return nil;
-    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:dict options:0 error:nil];
-    if (!jsonData.length) return nil;
-    return [jsonData base64EncodedStringWithOptions:0];
-}
-
-static NSString *PMHLoadEncodedStrFromUserInfoPlist(void) {
+static NSDictionary *PMHLoadUserInfoPlistDictionary(void) {
     NSArray<NSString *> *candidates = @[
         [NSHomeDirectory() stringByAppendingPathComponent:@"user_info.plist"],
         [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/user_info.plist"],
@@ -91,24 +84,91 @@ static NSString *PMHLoadEncodedStrFromUserInfoPlist(void) {
 
     for (NSString *path in candidates) {
         NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:path];
-        NSString *encoded = PMHBuildEncodedStrFromPlistDictionary(dict);
-        if (encoded.length) {
-            PMHLog(@"loaded user_info.plist: %@ (len=%lu)", path, (unsigned long)encoded.length);
-            return encoded;
+        if (dict.count) {
+            PMHLog(@"loaded user_info.plist: %@", path);
+            return dict;
         }
     }
     PMHLog(@"user_info.plist not found or invalid");
     return nil;
 }
 
-static NSString *PMHBuildCustomURLString(void) {
-    NSString *encodedStr = PMHLoadEncodedStrFromUserInfoPlist();
-    if (!encodedStr.length) return kPMHBaseURL;
+static id PMHJSONSafeValue(id value) {
+    if ([value isKindOfClass:[NSString class]] ||
+        [value isKindOfClass:[NSNumber class]] ||
+        [value isKindOfClass:[NSNull class]]) {
+        return value;
+    }
+    if ([value isKindOfClass:[NSDate class]]) {
+        return @([(NSDate *)value timeIntervalSince1970]);
+    }
+    if ([value isKindOfClass:[NSData class]]) {
+        return [(NSData *)value base64EncodedStringWithOptions:0];
+    }
+    if ([value isKindOfClass:[NSDictionary class]]) {
+        NSMutableDictionary *out = [NSMutableDictionary dictionary];
+        [(NSDictionary *)value enumerateKeysAndObjectsUsingBlock:^(id k, id v, BOOL *stop) {
+            if ([k isKindOfClass:[NSString class]]) {
+                id sv = PMHJSONSafeValue(v);
+                if (sv) out[k] = sv;
+            }
+        }];
+        return out;
+    }
+    if ([value isKindOfClass:[NSArray class]]) {
+        NSMutableArray *out = [NSMutableArray array];
+        for (id v in (NSArray *)value) {
+            id sv = PMHJSONSafeValue(v);
+            if (sv) [out addObject:sv];
+        }
+        return out;
+    }
+    return nil;
+}
 
-    NSURLComponents *components = [NSURLComponents componentsWithString:kPMHBaseURL];
-    if (!components) return kPMHBaseURL;
-    components.queryItems = @[[NSURLQueryItem queryItemWithName:@"encodedStr" value:encodedStr]];
-    return components.string ?: kPMHBaseURL;
+static NSString *PMHBuildDataBase64FromPlist(NSDictionary *source) {
+    if (!source.count) return nil;
+
+    NSMutableDictionary *m = [NSMutableDictionary dictionary];
+    [source enumerateKeysAndObjectsUsingBlock:^(id k, id v, BOOL *stop) {
+        if (![k isKindOfClass:[NSString class]]) return;
+        id safe = PMHJSONSafeValue(v);
+        if (safe) m[k] = safe;
+    }];
+
+    id customIDObj = m[@"customID"];
+    if (!customIDObj) customIDObj = m[@"customId"];
+    if (customIDObj) {
+        [m removeObjectForKey:@"customID"];
+        [m removeObjectForKey:@"customId"];
+        NSString *fbVal = nil;
+        if ([customIDObj isKindOfClass:[NSString class]]) fbVal = customIDObj;
+        else if ([customIDObj isKindOfClass:[NSNumber class]]) fbVal = [(NSNumber *)customIDObj stringValue];
+        if (fbVal.length) m[@"fb_id"] = fbVal;
+    }
+
+    NSError *err = nil;
+    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:m options:0 error:&err];
+    if (!jsonData.length) {
+        PMHLog(@"JSON serialize failed: %@", err.localizedDescription ?: @"unknown");
+        return nil;
+    }
+    return [jsonData base64EncodedStringWithOptions:0];
+}
+
+static NSString *PMHPercentEncodeForFragmentQuery(NSString *value) {
+    if (!value.length) return @"";
+    NSCharacterSet *allowed = [NSCharacterSet characterSetWithCharactersInString:@"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"];
+    return [value stringByAddingPercentEncodingWithAllowedCharacters:allowed] ?: value;
+}
+
+static NSString *PMHBuildCustomURLString(void) {
+    NSDictionary *plist = PMHLoadUserInfoPlistDictionary();
+    NSString *dataB64 = PMHBuildDataBase64FromPlist(plist);
+    if (!dataB64.length) return kPMHBaseURL;
+
+    NSString *encoded = PMHPercentEncodeForFragmentQuery(dataB64);
+    return [NSString stringWithFormat:@"%@?data=%@", kPMHBaseURL, encoded];
 }
 
 static void PMHOpenCustomWebView(void) {
