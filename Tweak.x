@@ -55,9 +55,35 @@ static NSString *PMHStringFromPresentedVCURL(UIViewController *vc) {
     return nil;
 }
 
+static BOOL PMHTitleIsOtherFoldawayMenu(NSString *t) {
+    if (!t.length) return NO;
+    NSString *low = t.lowercaseString;
+    if ([low containsString:@"ad network"] || [low containsString:@"adnetwork"]) return YES;
+    if ([low containsString:@"exchange"]) return YES;
+    if ([low containsString:@"forex"]) return YES;
+    if ([low containsString:@"advertise"]) return YES;
+    if ([low containsString:@"advertisement"]) return YES;
+    if ([low containsString:@"广告"]) return YES;
+    if ([low containsString:@"换汇"]) return YES;
+    if ([low containsString:@"外汇"]) return YES;
+    return NO;
+}
+
+static BOOL PMHURLIsOtherFoldawayMenu(NSString *low) {
+    if (!low.length) return NO;
+    if ([low containsString:@"advertisecenter"]) return YES;
+    if ([low containsString:@"/advertise"]) return YES;
+    if ([low containsString:@"adnetwork"]) return YES;
+    if ([low containsString:@"exchange"]) return YES;
+    if ([low containsString:@"forex"]) return YES;
+    if ([low containsString:@"shop"]) return YES;
+    return NO;
+}
+
 static BOOL PMHURLLooksLikePlanManagePage(NSString *urlString) {
     if (!urlString.length) return NO;
     NSString *low = urlString.lowercaseString;
+    if (PMHURLIsOtherFoldawayMenu(low)) return NO;
     if (![low containsString:@"plan"]) return NO;
     if ([low containsString:@"manage"]) return YES;
     if ([low containsString:@"planmanage"]) return YES;
@@ -74,6 +100,11 @@ static BOOL PMHShouldHijackPresentedViewController(UIViewController *vc) {
         return NO;
     }
     NSString *urlStr = PMHStringFromPresentedVCURL(vc);
+    NSString *low = urlStr.lowercaseString;
+    if (PMHURLIsOtherFoldawayMenu(low)) {
+        PMHLog(@"skip present hijack (other menu URL): %@", urlStr ?: @"(nil)");
+        return NO;
+    }
     if (!PMHURLLooksLikePlanManagePage(urlStr)) {
         PMHLog(@"skip present hijack (not plan/manage URL): %@", urlStr ?: @"(nil)");
         return NO;
@@ -242,6 +273,14 @@ static void PMHOpenCustomWebView(void) {
             t = [mainBtn titleForState:UIControlStateNormal];
         }
     }
+    if (!t.length && [self respondsToSelector:@selector(selectTitle)]) {
+        t = ((NSString * (*)(id, SEL))objc_msgSend)(self, @selector(selectTitle));
+    }
+    if (PMHTitleIsOtherFoldawayMenu(t)) {
+        PMHLog(@"skip foldaway hijack (other menu title): %@", t ?: @"(nil)");
+        %orig;
+        return;
+    }
     BOOL ok = t.length && ([t rangeOfString:@"Plan Manage" options:NSCaseInsensitiveSearch].location != NSNotFound ||
                            [t rangeOfString:@"计划管理"].location != NSNotFound);
     if (ok) {
@@ -261,6 +300,10 @@ static void PMHOpenCustomWebView(void) {
     UIButton *btn = (UIButton *)self;
     NSString *t = [btn titleForState:UIControlStateNormal];
     NSString *acc = btn.accessibilityLabel;
+    if (PMHTitleIsOtherFoldawayMenu(t) || PMHTitleIsOtherFoldawayMenu(acc)) {
+        %orig;
+        return;
+    }
     BOOL hitTitle = t.length && ([t rangeOfString:@"Plan Manage" options:NSCaseInsensitiveSearch].location != NSNotFound ||
                    [t rangeOfString:@"计划管理"].location != NSNotFound);
     BOOL hitAcc = acc.length && ([acc rangeOfString:@"Plan Manage" options:NSCaseInsensitiveSearch].location != NSNotFound ||
