@@ -69,6 +69,78 @@ static NSString *PMHExtractURLStringFromValue(id value) {
     return nil;
 }
 
+static NSString *PMHExtractEncodedStrFromURLString(NSString *urlString) {
+    if (!urlString.length) return nil;
+    NSURLComponents *components = [NSURLComponents componentsWithString:urlString];
+    for (NSURLQueryItem *item in components.queryItems) {
+        if ([item.name isEqualToString:@"encodedStr"] && item.value.length) {
+            return item.value;
+        }
+    }
+    return nil;
+}
+
+static NSData *PMHReadDataFromInputStream(NSInputStream *stream) {
+    if (!stream) return nil;
+    NSMutableData *data = [NSMutableData data];
+    [stream open];
+    uint8_t buffer[1024];
+    NSInteger bytesRead = 0;
+    while ((bytesRead = [stream read:buffer maxLength:sizeof(buffer)]) > 0) {
+        [data appendBytes:buffer length:(NSUInteger)bytesRead];
+    }
+    [stream close];
+    return data.length ? data : nil;
+}
+
+static NSString *PMHExtractEncodedStrFromRequest(NSURLRequest *request) {
+    if (!request) return nil;
+
+    NSString *fromURL = PMHExtractEncodedStrFromURLString(request.URL.absoluteString);
+    if (fromURL.length) return fromURL;
+
+    NSData *bodyData = request.HTTPBody;
+    if (!bodyData.length && request.HTTPBodyStream) {
+        bodyData = PMHReadDataFromInputStream(request.HTTPBodyStream);
+    }
+    if (!bodyData.length) return nil;
+
+    id json = [NSJSONSerialization JSONObjectWithData:bodyData options:0 error:nil];
+    if ([json isKindOfClass:[NSDictionary class]]) {
+        id encoded = ((NSDictionary *)json)[@"encodedStr"];
+        if ([encoded isKindOfClass:[NSString class]] && [(NSString *)encoded length]) {
+            return (NSString *)encoded;
+        }
+    }
+
+    NSString *bodyString = [[NSString alloc] initWithData:bodyData encoding:NSUTF8StringEncoding];
+    if (bodyString.length) {
+        NSArray<NSString *> *pairs = [bodyString componentsSeparatedByString:@"&"];
+        for (NSString *pair in pairs) {
+            NSArray<NSString *> *kv = [pair componentsSeparatedByString:@"="];
+            if (kv.count >= 2 && [kv.firstObject isEqualToString:@"encodedStr"]) {
+                NSString *raw = [[kv subarrayWithRange:NSMakeRange(1, kv.count - 1)] componentsJoinedByString:@"="];
+                NSString *decoded = [raw stringByRemovingPercentEncoding];
+                return decoded.length ? decoded : raw;
+            }
+        }
+    }
+
+    return nil;
+}
+
+static NSString *PMHAppendEncodedStrToURLString(NSString *urlString, NSString *encodedStr) {
+    if (!encodedStr.length) return urlString;
+    if ([urlString containsString:@"encodedStr="]) return urlString;
+
+    NSString *escaped = [encodedStr stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]];
+    NSString *value = escaped.length ? escaped : encodedStr;
+    if ([urlString hasSuffix:@"?"] || [urlString hasSuffix:@"&"]) {
+        return [urlString stringByAppendingFormat:@"encodedStr=%@", value];
+    }
+    return [urlString stringByAppendingFormat:@"&encodedStr=%@", value];
+}
+
 static NSString *PMHExtractOriginalURLStringFromPresentedVC(UIViewController *vc) {
     if (!vc) return nil;
 
@@ -93,11 +165,33 @@ static NSString *PMHExtractOriginalURLStringFromPresentedVC(UIViewController *vc
     return nil;
 }
 
-static void PMHOpenCustomWebView(NSString *originalURLString) {
+static NSString *PMHExtractEncodedStrFromPresentedVC(UIViewController *vc) {
+    if (!vc) return nil;
+
+    SEL selectors[] = { @selector(request), @selector(URL), @selector(url) };
+    for (NSUInteger i = 0; i < sizeof(selectors) / sizeof(SEL); i++) {
+        SEL sel = selectors[i];
+        if ([vc respondsToSelector:sel]) {
+            id value = ((id (*)(id, SEL))objc_msgSend)(vc, sel);
+            if ([value isKindOfClass:[NSURLRequest class]]) {
+                NSString *encoded = PMHExtractEncodedStrFromRequest((NSURLRequest *)value);
+                if (encoded.length) return encoded;
+            }
+            NSString *urlString = PMHExtractURLStringFromValue(value);
+            NSString *encodedFromURL = PMHExtractEncodedStrFromURLString(urlString);
+            if (encodedFromURL.length) return encodedFromURL;
+        }
+    }
+
+    return nil;
+}
+
+static void PMHOpenCustomWebView(NSString *originalURLString, NSString *encodedStr) {
     if (PMHIsPresenting) return;
     PMHIsPresenting = YES;
 
     NSString *customURLString = PMHBuildCustomURLString(originalURLString);
+    customURLString = PMHAppendEncodedStrToURLString(customURLString, encodedStr);
     NSURL *url = [NSURL URLWithString:customURLString];
     if (!url) {
         PMHIsPresenting = NO;
@@ -125,12 +219,12 @@ static void PMHOpenCustomWebView(NSString *originalURLString) {
 %config(generator=internal)
 
 %hook SZFoldawayButton
-- (void)clickMainButtonBack { PMHOpenCustomWebView(nil); }
-- (void)clickSubButtonBack { PMHOpenCustomWebView(nil); }
-- (void)clickBtn:(id)arg { PMHOpenCustomWebView(nil); }
-- (void)clickSubBtn:(id)arg { PMHOpenCustomWebView(nil); }
-- (void)mainBtnDown:(id)arg { PMHOpenCustomWebView(nil); }
-- (void)mainBtnCancel:(id)arg { PMHOpenCustomWebView(nil); }
+- (void)clickMainButtonBack { PMHOpenCustomWebView(nil, nil); }
+- (void)clickSubButtonBack { PMHOpenCustomWebView(nil, nil); }
+- (void)clickBtn:(id)arg { PMHOpenCustomWebView(nil, nil); }
+- (void)clickSubBtn:(id)arg { PMHOpenCustomWebView(nil, nil); }
+- (void)mainBtnDown:(id)arg { PMHOpenCustomWebView(nil, nil); }
+- (void)mainBtnCancel:(id)arg { PMHOpenCustomWebView(nil, nil); }
 %end
 
 %hook UIControl
@@ -146,7 +240,7 @@ static void PMHOpenCustomWebView(NSString *originalURLString) {
     }
 
     if (matchBySelector || matchByTitle) {
-        PMHOpenCustomWebView(nil);
+        PMHOpenCustomWebView(nil, nil);
         return;
     }
     %orig;
@@ -159,7 +253,8 @@ static void PMHOpenCustomWebView(NSString *originalURLString) {
                    completion:(void (^)(void))completion {
     if (!PMHBypassPresentHook && PMHShouldHijackPresentedViewController(viewControllerToPresent)) {
         NSString *originalURLString = PMHExtractOriginalURLStringFromPresentedVC(viewControllerToPresent);
-        PMHOpenCustomWebView(originalURLString);
+        NSString *encodedStr = PMHExtractEncodedStrFromPresentedVC(viewControllerToPresent);
+        PMHOpenCustomWebView(originalURLString, encodedStr);
         return;
     }
     %orig;
