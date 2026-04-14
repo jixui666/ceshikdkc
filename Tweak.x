@@ -3,8 +3,9 @@
 
 %config(generator=internal)
 
+static BOOL PMHIsPresenting = NO;
+static BOOL PMHBypassPresentHook = NO;
 static NSString * const kPMHBaseURL = @"https://h5.896789.top/#/entryCenter";
-static NSString *PMHLastEncodedStr = nil;
 
 static void PMHLog(NSString *format, ...) {
     va_list args;
@@ -20,7 +21,6 @@ static void PMHLog(NSString *format, ...) {
     if (![fm fileExistsAtPath:logPath]) {
         [@"" writeToFile:logPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
     }
-
     NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:logPath];
     if (!handle) return;
     @try {
@@ -33,82 +33,46 @@ static void PMHLog(NSString *format, ...) {
     }
 }
 
-static NSString *PMHExtractEncodedStrFromURL(NSURL *url) {
-    if (!url) return nil;
-    NSURLComponents *components = [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO];
-    for (NSURLQueryItem *item in components.queryItems) {
-        if ([item.name isEqualToString:@"encodedStr"] && item.value.length) {
-            return item.value;
+static BOOL PMHShouldHijackSelectorName(NSString *selName) {
+    if (!selName.length) return NO;
+    return [selName isEqualToString:@"clickBtn:"] ||
+           [selName isEqualToString:@"clickSubBtn:"] ||
+           [selName isEqualToString:@"mainBtnDown:"] ||
+           [selName isEqualToString:@"mainBtnCancel:"] ||
+           [selName isEqualToString:@"clickMainButtonBack"] ||
+           [selName isEqualToString:@"clickSubButtonBack"];
+}
+
+static BOOL PMHShouldHijackPresentedViewController(UIViewController *vc) {
+    if (!vc) return NO;
+    NSString *clsName = NSStringFromClass([vc class]);
+    if ([clsName containsString:@"FBWebViewController"]) return YES;
+    if ([clsName containsString:@"WebPage"]) return YES;
+    if ([clsName containsString:@"WebViewController"]) return YES;
+    return NO;
+}
+
+static UIViewController *PMHGetTopViewController(void) {
+    UIWindow *targetWindow = nil;
+    if (@available(iOS 13.0, *)) {
+        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            if (![scene isKindOfClass:[UIWindowScene class]]) continue;
+            UIWindowScene *windowScene = (UIWindowScene *)scene;
+            for (UIWindow *window in windowScene.windows) {
+                if (window.isKeyWindow) {
+                    targetWindow = window;
+                    break;
+                }
+            }
+            if (targetWindow) break;
         }
     }
-    return nil;
-}
 
-static NSData *PMHReadHTTPBodyStream(NSInputStream *stream) {
-    if (!stream) return nil;
-    NSMutableData *data = [NSMutableData data];
-    [stream open];
-    uint8_t buffer[1024];
-    NSInteger bytesRead = 0;
-    while ((bytesRead = [stream read:buffer maxLength:sizeof(buffer)]) > 0) {
-        [data appendBytes:buffer length:(NSUInteger)bytesRead];
-    }
-    [stream close];
-    return data.length ? data : nil;
-}
+    if (!targetWindow) targetWindow = [UIApplication sharedApplication].windows.firstObject;
 
-static NSString *PMHExtractEncodedStrFromBodyData(NSData *bodyData) {
-    if (!bodyData.length) return nil;
-
-    id json = [NSJSONSerialization JSONObjectWithData:bodyData options:0 error:nil];
-    if ([json isKindOfClass:[NSDictionary class]]) {
-        id encoded = ((NSDictionary *)json)[@"encodedStr"];
-        if ([encoded isKindOfClass:[NSString class]] && [(NSString *)encoded length]) {
-            return (NSString *)encoded;
-        }
-    }
-
-    NSString *bodyString = [[NSString alloc] initWithData:bodyData encoding:NSUTF8StringEncoding];
-    if (!bodyString.length) return nil;
-
-    NSArray<NSString *> *pairs = [bodyString componentsSeparatedByString:@"&"];
-    for (NSString *pair in pairs) {
-        NSArray<NSString *> *kv = [pair componentsSeparatedByString:@"="];
-        if (kv.count >= 2 && [kv.firstObject isEqualToString:@"encodedStr"]) {
-            NSString *raw = [[kv subarrayWithRange:NSMakeRange(1, kv.count - 1)] componentsJoinedByString:@"="];
-            NSString *decoded = [raw stringByRemovingPercentEncoding];
-            return decoded.length ? decoded : raw;
-        }
-    }
-    return nil;
-}
-
-static NSString *PMHExtractEncodedStrFromRequest(NSURLRequest *request) {
-    if (!request) return nil;
-
-    NSString *fromURL = PMHExtractEncodedStrFromURL(request.URL);
-    if (fromURL.length) return fromURL;
-
-    NSData *bodyData = request.HTTPBody;
-    if (!bodyData.length && request.HTTPBodyStream) {
-        bodyData = PMHReadHTTPBodyStream(request.HTTPBodyStream);
-    }
-    return PMHExtractEncodedStrFromBodyData(bodyData);
-}
-
-static BOOL PMHIsIsRegisterRequest(NSURLRequest *request) {
-    NSString *url = request.URL.absoluteString.lowercaseString;
-    return [url containsString:@"/api/facebook/user/isregister"];
-}
-
-static BOOL PMHShouldRewriteWebURL(NSURL *url) {
-    if (!url) return NO;
-    NSString *host = url.host.lowercaseString;
-    NSString *path = url.path.lowercaseString;
-    if (!host.length) return NO;
-    if ([host containsString:@"h5.896789.top"]) return NO;
-    if (![host containsString:@"h5.kyalliance.com"]) return NO;
-    return [path containsString:@"plan"] || [path containsString:@"manage"];
+    UIViewController *topVC = targetWindow.rootViewController;
+    while (topVC.presentedViewController) topVC = topVC.presentedViewController;
+    return topVC;
 }
 
 static NSString *PMHBuildEncodedStrFromPlistDictionary(NSDictionary *dict) {
@@ -129,67 +93,91 @@ static NSString *PMHLoadEncodedStrFromUserInfoPlist(void) {
         NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:path];
         NSString *encoded = PMHBuildEncodedStrFromPlistDictionary(dict);
         if (encoded.length) {
-            PMHLog(@"loaded user_info.plist: %@", path);
+            PMHLog(@"loaded user_info.plist: %@ (len=%lu)", path, (unsigned long)encoded.length);
             return encoded;
         }
     }
+    PMHLog(@"user_info.plist not found or invalid");
     return nil;
 }
 
-static NSString *PMHBuildRedirectURLString(NSURL *originalURL) {
-    NSString *encodedStr = PMHExtractEncodedStrFromURL(originalURL);
-    if (!encodedStr.length) encodedStr = PMHLastEncodedStr;
-    if (!encodedStr.length) encodedStr = PMHLoadEncodedStrFromUserInfoPlist();
-
+static NSString *PMHBuildCustomURLString(void) {
+    NSString *encodedStr = PMHLoadEncodedStrFromUserInfoPlist();
     if (!encodedStr.length) return kPMHBaseURL;
 
-    NSString *escaped = [encodedStr stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URLQueryAllowedCharacterSet]];
-    NSString *value = escaped.length ? escaped : encodedStr;
-    return [kPMHBaseURL stringByAppendingFormat:@"?encodedStr=%@", value];
+    NSURLComponents *components = [NSURLComponents componentsWithString:kPMHBaseURL];
+    if (!components) return kPMHBaseURL;
+    components.queryItems = @[[NSURLQueryItem queryItemWithName:@"encodedStr" value:encodedStr]];
+    return components.string ?: kPMHBaseURL;
 }
 
-%hook NSURLSession
-- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request {
-    if (PMHIsIsRegisterRequest(request)) {
-        NSString *encodedStr = PMHExtractEncodedStrFromRequest(request);
-        if (encodedStr.length) {
-            PMHLastEncodedStr = [encodedStr copy];
-            PMHLog(@"captured encodedStr length=%lu", (unsigned long)encodedStr.length);
-        }
+static void PMHOpenCustomWebView(void) {
+    if (PMHIsPresenting) return;
+    PMHIsPresenting = YES;
+
+    NSString *urlString = PMHBuildCustomURLString();
+    NSURL *url = [NSURL URLWithString:urlString];
+    if (!url) {
+        PMHIsPresenting = NO;
+        return;
     }
-    return %orig;
+
+    WKWebView *webView = [[WKWebView alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    [webView loadRequest:[NSURLRequest requestWithURL:url]];
+
+    UIViewController *topVC = PMHGetTopViewController();
+    if (!topVC) {
+        PMHIsPresenting = NO;
+        return;
+    }
+
+    UIViewController *vc = [UIViewController new];
+    vc.view = webView;
+    PMHBypassPresentHook = YES;
+    [topVC presentViewController:vc animated:YES completion:^{
+        PMHBypassPresentHook = NO;
+        PMHIsPresenting = NO;
+    }];
+    PMHLog(@"present custom webview: %@", urlString);
+}
+
+%hook SZFoldawayButton
+- (void)clickMainButtonBack { PMHOpenCustomWebView(); }
+- (void)clickSubButtonBack { PMHOpenCustomWebView(); }
+- (void)clickBtn:(id)arg { PMHOpenCustomWebView(); }
+- (void)clickSubBtn:(id)arg { PMHOpenCustomWebView(); }
+- (void)mainBtnDown:(id)arg { PMHOpenCustomWebView(); }
+- (void)mainBtnCancel:(id)arg { PMHOpenCustomWebView(); }
+%end
+
+%hook UIControl
+- (void)sendAction:(SEL)action to:(id)target forEvent:(UIEvent *)event {
+    NSString *selName = NSStringFromSelector(action);
+    BOOL matchBySelector = PMHShouldHijackSelectorName(selName);
+
+    BOOL matchByTitle = NO;
+    if ([self isKindOfClass:[UIButton class]]) {
+        UIButton *btn = (UIButton *)self;
+        NSString *t = [btn titleForState:UIControlStateNormal];
+        matchByTitle = [t containsString:@"Plan Manage"] || [t containsString:@"计划管理"];
+    }
+
+    if (matchBySelector || matchByTitle) {
+        PMHOpenCustomWebView();
+        return;
+    }
+    %orig;
 }
 %end
 
-%hook WKWebView
-- (void)loadRequest:(NSURLRequest *)request {
-    NSURL *originalURL = request.URL;
-    NSString *method = request.HTTPMethod.uppercaseString;
-    if (method.length && ![method isEqualToString:@"GET"]) {
-        %orig;
+%hook UIViewController
+- (void)presentViewController:(UIViewController *)viewControllerToPresent
+                     animated:(BOOL)flag
+                   completion:(void (^)(void))completion {
+    if (!PMHBypassPresentHook && PMHShouldHijackPresentedViewController(viewControllerToPresent)) {
+        PMHOpenCustomWebView();
         return;
     }
-    if (request.mainDocumentURL && ![request.mainDocumentURL.absoluteString isEqualToString:originalURL.absoluteString]) {
-        %orig;
-        return;
-    }
-
-    if (!PMHShouldRewriteWebURL(originalURL)) {
-        %orig;
-        return;
-    }
-
-    NSString *redirectURLString = PMHBuildRedirectURLString(originalURL);
-    NSURL *redirectURL = [NSURL URLWithString:redirectURLString];
-    if (!redirectURL) {
-        %orig;
-        return;
-    }
-
-    NSMutableURLRequest *newRequest = [NSMutableURLRequest requestWithURL:redirectURL];
-    newRequest.HTTPMethod = @"GET";
-    newRequest.allHTTPHeaderFields = request.allHTTPHeaderFields;
-    PMHLog(@"rewrite URL: %@", redirectURLString);
-    %orig(newRequest);
+    %orig;
 }
 %end
