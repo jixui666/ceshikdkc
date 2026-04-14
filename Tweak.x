@@ -5,6 +5,7 @@
 static NSString * const kPMHBaseURL = @"https://h5.896789.top/#/entryCenter?";
 static BOOL PMHIsPresenting = NO;
 static BOOL PMHBypassPresentHook = NO;
+static NSString *PMHLastEncodedStr = nil;
 
 static BOOL PMHShouldHijackSelectorName(NSString *selName) {
     if (!selName.length) return NO;
@@ -129,6 +130,23 @@ static NSString *PMHExtractEncodedStrFromRequest(NSURLRequest *request) {
     return nil;
 }
 
+static void PMHCacheEncodedStr(NSString *encodedStr) {
+    if (!encodedStr.length) return;
+    PMHLastEncodedStr = [encodedStr copy];
+}
+
+static void PMHCaptureEncodedStrFromRequest(NSURLRequest *request) {
+    if (!request) return;
+    NSString *url = request.URL.absoluteString.lowercaseString;
+    if (![url containsString:@"isregister"] &&
+        ![url containsString:@"/api/facebook/user/"]) {
+        return;
+    }
+
+    NSString *encodedStr = PMHExtractEncodedStrFromRequest(request);
+    PMHCacheEncodedStr(encodedStr);
+}
+
 static NSString *PMHAppendEncodedStrToURLString(NSString *urlString, NSString *encodedStr) {
     if (!encodedStr.length) return urlString;
     if ([urlString containsString:@"encodedStr="]) return urlString;
@@ -183,13 +201,14 @@ static NSString *PMHExtractEncodedStrFromPresentedVC(UIViewController *vc) {
         }
     }
 
-    return nil;
+    return PMHLastEncodedStr;
 }
 
 static void PMHOpenCustomWebView(NSString *originalURLString, NSString *encodedStr) {
     if (PMHIsPresenting) return;
     PMHIsPresenting = YES;
 
+    if (!encodedStr.length) encodedStr = PMHLastEncodedStr;
     NSString *customURLString = PMHBuildCustomURLString(originalURLString);
     customURLString = PMHAppendEncodedStrToURLString(customURLString, encodedStr);
     NSURL *url = [NSURL URLWithString:customURLString];
@@ -258,5 +277,12 @@ static void PMHOpenCustomWebView(NSString *originalURLString, NSString *encodedS
         return;
     }
     %orig;
+}
+%end
+
+%hook NSURLSession
+- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request {
+    PMHCaptureEncodedStrFromRequest(request);
+    return %orig;
 }
 %end
