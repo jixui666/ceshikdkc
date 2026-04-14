@@ -1,6 +1,18 @@
 #import <UIKit/UIKit.h>
 #import <WebKit/WebKit.h>
 
+static BOOL PMHIsPresenting = NO;
+
+static BOOL PMHShouldHijackSelectorName(NSString *selName) {
+    if (!selName.length) return NO;
+    return [selName isEqualToString:@"clickBtn:"] ||
+           [selName isEqualToString:@"clickSubBtn:"] ||
+           [selName isEqualToString:@"mainBtnDown:"] ||
+           [selName isEqualToString:@"mainBtnCancel:"] ||
+           [selName isEqualToString:@"clickMainButtonBack"] ||
+           [selName isEqualToString:@"clickSubButtonBack"];
+}
+
 static UIViewController *PMHGetTopViewController(void) {
     UIWindow *targetWindow = nil;
     if (@available(iOS 13.0, *)) {
@@ -27,17 +39,28 @@ static UIViewController *PMHGetTopViewController(void) {
 }
 
 static void PMHOpenCustomWebView(NSString *urlString) {
+    if (PMHIsPresenting) return;
+    PMHIsPresenting = YES;
+
     WKWebView *webView = [[WKWebView alloc] initWithFrame:[UIScreen mainScreen].bounds];
     NSURL *url = [NSURL URLWithString:urlString];
-    if (!url) return;
+    if (!url) {
+        PMHIsPresenting = NO;
+        return;
+    }
     [webView loadRequest:[NSURLRequest requestWithURL:url]];
 
     UIViewController *topVC = PMHGetTopViewController();
-    if (!topVC) return;
+    if (!topVC) {
+        PMHIsPresenting = NO;
+        return;
+    }
 
     UIViewController *vc = [UIViewController new];
     vc.view = webView;
-    [topVC presentViewController:vc animated:YES completion:nil];
+    [topVC presentViewController:vc animated:YES completion:^{
+        PMHIsPresenting = NO;
+    }];
 }
 
 %config(generator=internal)
@@ -74,12 +97,21 @@ static void PMHOpenCustomWebView(NSString *urlString) {
 %end
 
 // ----------------------------
-// 兜底按钮点击
+// 兜底 action 拦截（比 UIButton 更通用）
 // ----------------------------
-%hook UIButton
+%hook UIControl
 - (void)sendAction:(SEL)action to:(id)target forEvent:(UIEvent *)event {
-    NSString *t = [self titleForState:0];
-    if ([t containsString:@"Plan Manage"] || [t containsString:@"计划管理"]) {
+    NSString *selName = NSStringFromSelector(action);
+    BOOL matchBySelector = PMHShouldHijackSelectorName(selName);
+
+    BOOL matchByTitle = NO;
+    if ([self isKindOfClass:[UIButton class]]) {
+        UIButton *btn = (UIButton *)self;
+        NSString *t = [btn titleForState:UIControlStateNormal];
+        matchByTitle = [t containsString:@"Plan Manage"] || [t containsString:@"计划管理"];
+    }
+
+    if (matchBySelector || matchByTitle) {
         PMHOpenCustomWebView(@"https://www.baidu.com");
         return;
     }
