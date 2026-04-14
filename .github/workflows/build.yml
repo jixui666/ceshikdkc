@@ -15,6 +15,7 @@ jobs:
           export THEOS="$GITHUB_WORKSPACE/theos"
           git clone --recursive https://github.com/theos/theos.git $THEOS
           git -C $THEOS/sdks pull
+          brew install ldid
 
       - name: Build
         run: |
