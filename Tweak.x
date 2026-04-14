@@ -17,42 +17,100 @@ static void PMHLog(NSString *format, ...) {
     NSString *line = [NSString stringWithFormat:@"[PlanManageHijack] %@\n", message];
     NSLog(@"%@", [line stringByTrimmingCharactersInSet:[NSCharacterSet newlineCharacterSet]]);
 
-    NSString *logPath = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/pmh.log"];
     NSFileManager *fm = [NSFileManager defaultManager];
-    if (![fm fileExistsAtPath:logPath]) {
-        [@"" writeToFile:logPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    }
-    NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:logPath];
-    if (!handle) return;
-    @try {
-        [handle seekToEndOfFile];
-        NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
-        if (data.length) [handle writeData:data];
-    } @catch (__unused NSException *e) {
-    } @finally {
-        [handle closeFile];
+    NSArray<NSString *> *logPaths = @[
+        [NSHomeDirectory() stringByAppendingPathComponent:@"pmh.log"],
+        [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/pmh.log"]
+    ];
+    NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
+    for (NSString *logPath in logPaths) {
+        if (![fm fileExistsAtPath:logPath]) {
+            [@"" writeToFile:logPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        }
+        NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:logPath];
+        if (!handle) continue;
+        @try {
+            [handle seekToEndOfFile];
+            if (data.length) [handle writeData:data];
+        } @catch (__unused NSException *e) {
+        } @finally {
+            [handle closeFile];
+        }
     }
 }
 
-static NSString *PMHStringFromPresentedVCURL(UIViewController *vc) {
-    if (!vc) return nil;
-    SEL sels[] = { @selector(URL), @selector(url), @selector(requestURL) };
+static NSString *PMHValueAsURLString(id v) {
+    if (!v) return nil;
+    if ([v isKindOfClass:[NSURL class]]) return [(NSURL *)v absoluteString];
+    if ([v isKindOfClass:[NSString class]]) return (NSString *)v;
+    if ([v isKindOfClass:[NSURLRequest class]]) return [((NSURLRequest *)v).URL absoluteString];
+    return nil;
+}
+
+static NSString *PMHTryURLKeysOnObject(id obj) {
+    if (!obj) return nil;
+    SEL sels[] = {
+        @selector(URL), @selector(url), @selector(requestURL),
+        @selector(originalURL), @selector(targetURL), @selector(pageURL)
+    };
     for (size_t i = 0; i < sizeof(sels) / sizeof(SEL); i++) {
         SEL sel = sels[i];
-        if (![vc respondsToSelector:sel]) continue;
-        id v = ((id (*)(id, SEL))objc_msgSend)(vc, sel);
-        if ([v isKindOfClass:[NSURL class]]) return [(NSURL *)v absoluteString];
-        if ([v isKindOfClass:[NSString class]]) return (NSString *)v;
+        if (![(id)obj respondsToSelector:sel]) continue;
+        id v = ((id (*)(id, SEL))objc_msgSend)((id)obj, sel);
+        NSString *s = PMHValueAsURLString(v);
+        if (s.length) return s;
     }
-    if ([vc respondsToSelector:@selector(request)]) {
-        id req = ((id (*)(id, SEL))objc_msgSend)(vc, @selector(request));
-        if ([req isKindOfClass:[NSURLRequest class]]) return [((NSURLRequest *)req).URL absoluteString];
+    if ([(id)obj respondsToSelector:@selector(request)]) {
+        id req = ((id (*)(id, SEL))objc_msgSend)((id)obj, @selector(request));
+        NSString *s = PMHValueAsURLString(req);
+        if (s.length) return s;
     }
-    if ([vc respondsToSelector:@selector(webView)]) {
-        id wv = ((id (*)(id, SEL))objc_msgSend)(vc, @selector(webView));
-        if ([wv isKindOfClass:[WKWebView class]]) return ((WKWebView *)wv).URL.absoluteString;
+    NSArray<NSString *> *kvcKeys = @[
+        @"URL", @"url", @"URLString", @"urlString", @"_url", @"_URL",
+        @"webUrl", @"jumpUrl", @"linkUrl", @"h5Url", @"loadURL", @"pageURL",
+        @"remoteURL", @"openURL", @"openUrl", @"mUrl", @"htmlUrl"
+    ];
+    for (NSString *k in kvcKeys) {
+        @try {
+            id v = [(id)obj valueForKey:k];
+            NSString *s = PMHValueAsURLString(v);
+            if (s.length) return s;
+        } @catch (__unused NSException *e) {
+        }
+    }
+    if ([(id)obj respondsToSelector:@selector(webView)]) {
+        id wv = ((id (*)(id, SEL))objc_msgSend)((id)obj, @selector(webView));
+        if ([wv isKindOfClass:[WKWebView class]]) {
+            NSString *s = ((WKWebView *)wv).URL.absoluteString;
+            if (s.length) return s;
+        }
     }
     return nil;
+}
+
+static NSString *PMHStringFromPresentedVCURLWithDepth(UIViewController *vc, NSInteger depth) {
+    if (!vc || depth <= 0) return nil;
+    NSString *u = PMHTryURLKeysOnObject(vc);
+    if (u.length) return u;
+    @try {
+        for (UIViewController *ch in vc.childViewControllers) {
+            u = PMHStringFromPresentedVCURLWithDepth(ch, depth - 1);
+            if (u.length) return u;
+        }
+    } @catch (__unused NSException *e) {
+    }
+    if ([vc isKindOfClass:[UINavigationController class]]) {
+        UINavigationController *nav = (UINavigationController *)vc;
+        u = PMHStringFromPresentedVCURLWithDepth(nav.visibleViewController, depth - 1);
+        if (u.length) return u;
+        u = PMHStringFromPresentedVCURLWithDepth(nav.topViewController, depth - 1);
+        if (u.length) return u;
+    }
+    return nil;
+}
+
+static NSString *PMHStringFromPresentedVCURL(UIViewController *vc) {
+    return PMHStringFromPresentedVCURLWithDepth(vc, 6);
 }
 
 static BOOL PMHTitleIsOtherFoldawayMenu(NSString *t) {
@@ -166,7 +224,7 @@ static BOOL PMHShouldHijackPresentedViewController(UIViewController *vc) {
         return NO;
     }
     if (!PMHURLLooksLikePlanManagePage(urlStr)) {
-        PMHLog(@"skip present hijack (not plan/manage URL): %@", urlStr ?: @"(nil)");
+        PMHLog(@"skip present hijack (URL nil or not plan/manage; WKWebView loadRequest may still rewrite): %@", urlStr ?: @"(nil)");
         return NO;
     }
     return YES;
@@ -376,5 +434,44 @@ static void PMHOpenCustomWebView(void) {
         return;
     }
     %orig;
+}
+%end
+
+%hook WKWebView
+- (void)loadRequest:(NSURLRequest *)request {
+    NSURL *u = request.URL;
+    NSString *abs = u.absoluteString ?: @"";
+    NSString *low = abs.lowercaseString;
+    if (PMHURLIsOtherFoldawayMenu(low)) {
+        %orig;
+        return;
+    }
+    if ([low containsString:@"h5.896789.top"] && [low containsString:@"entryplan"]) {
+        %orig;
+        return;
+    }
+    NSString *method = (request.HTTPMethod.length ? request.HTTPMethod : @"GET").uppercaseString;
+    if (![method isEqualToString:@"GET"]) {
+        %orig;
+        return;
+    }
+    if (request.mainDocumentURL && ![request.mainDocumentURL.absoluteString isEqualToString:abs]) {
+        %orig;
+        return;
+    }
+    if (!PMHURLLooksLikePlanManagePage(abs)) {
+        %orig;
+        return;
+    }
+    NSString *custom = PMHBuildCustomURLString();
+    NSURL *cu = [NSURL URLWithString:custom];
+    if (!cu) {
+        %orig;
+        return;
+    }
+    NSMutableURLRequest *nr = [request mutableCopy];
+    nr.URL = cu;
+    PMHLog(@"WKWebView loadRequest rewrite plan URL -> %@", custom);
+    %orig(nr);
 }
 %end
