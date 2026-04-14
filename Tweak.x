@@ -86,11 +86,69 @@ static BOOL PMHURLLooksLikePlanManagePage(NSString *urlString) {
     if (!urlString.length) return NO;
     NSString *low = urlString.lowercaseString;
     if (PMHURLIsOtherFoldawayMenu(low)) return NO;
-    if (![low containsString:@"plan"]) return NO;
-    if ([low containsString:@"manage"]) return YES;
     if ([low containsString:@"planmanage"]) return YES;
     if ([low containsString:@"plan_manage"]) return YES;
+    if ([low containsString:@"plan%2fmanage"] || [low containsString:@"plan/manage"]) return YES;
+    if ([low containsString:@"plan"] && [low containsString:@"manage"]) return YES;
+    if ([low containsString:@"kyalliance.com"] && [low containsString:@"plan"]) return YES;
     return NO;
+}
+
+static NSString *PMHKVCString(id obj, NSString *key) {
+    if (!obj || !key.length) return nil;
+    @try {
+        id v = [obj valueForKey:key];
+        if ([v isKindOfClass:[NSString class]] && [(NSString *)v length]) return (NSString *)v;
+        if ([v isKindOfClass:[NSNumber class]]) return [(NSNumber *)v stringValue];
+    } @catch (__unused NSException *e) {
+    }
+    return nil;
+}
+
+static NSString *PMHFoldawayResolvedLabel(id fold) {
+    if (!fold) return nil;
+    NSArray<NSString *> *keys = @[
+        @"mainBtnTitle", @"mainBtnSelectTitle", @"selectTitle", @"btnTitle",
+        @"_mainBtnTitle", @"_mainBtnSelectTitle", @"_selectTitle", @"_btnTitle"
+    ];
+    for (NSString *k in keys) {
+        NSString *s = PMHKVCString(fold, k);
+        if (s.length) return s;
+    }
+    if ([fold respondsToSelector:@selector(mainBtnTitle)]) {
+        NSString *s = ((NSString * (*)(id, SEL))objc_msgSend)(fold, @selector(mainBtnTitle));
+        if (s.length) return s;
+    }
+    if ([fold respondsToSelector:@selector(selectTitle)]) {
+        NSString *s = ((NSString * (*)(id, SEL))objc_msgSend)(fold, @selector(selectTitle));
+        if (s.length) return s;
+    }
+    if ([fold respondsToSelector:@selector(mainBtn)]) {
+        UIButton *b = ((id (*)(id, SEL))objc_msgSend)(fold, @selector(mainBtn));
+        if ([b isKindOfClass:[UIButton class]]) {
+            for (NSUInteger st = 0; st < 8; st++) {
+                NSString *tt = [b titleForState:(UIControlState)st];
+                if (tt.length) return tt;
+            }
+        }
+    }
+    @try {
+        NSArray *arr = [fold valueForKey:@"titlesArray"];
+        if (![arr isKindOfClass:[NSArray class]]) arr = [fold valueForKey:@"_titlesArray"];
+        if ([arr isKindOfClass:[NSArray class]]) {
+            for (id x in arr) {
+                if (![x isKindOfClass:[NSString class]]) continue;
+                NSString *s = (NSString *)x;
+                if (!s.length) continue;
+                if ([s rangeOfString:@"Plan Manage" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                    [s rangeOfString:@"计划管理"].location != NSNotFound) {
+                    return s;
+                }
+            }
+        }
+    } @catch (__unused NSException *e) {
+    }
+    return nil;
 }
 
 static BOOL PMHShouldHijackPresentedViewController(UIViewController *vc) {
@@ -266,19 +324,8 @@ static void PMHOpenCustomWebView(void) {
 %hook SZFoldawayButton
 - (void)clickMainButtonBack {
     id fold = (id)self;
-    NSString *t = nil;
-    if ([fold respondsToSelector:@selector(mainBtnTitle)]) {
-        t = ((NSString * (*)(id, SEL))objc_msgSend)(fold, @selector(mainBtnTitle));
-    }
-    if (!t.length && [fold respondsToSelector:@selector(mainBtn)]) {
-        UIButton *mainBtn = ((id (*)(id, SEL))objc_msgSend)(fold, @selector(mainBtn));
-        if ([mainBtn isKindOfClass:[UIButton class]]) {
-            t = [mainBtn titleForState:UIControlStateNormal];
-        }
-    }
-    if (!t.length && [fold respondsToSelector:@selector(selectTitle)]) {
-        t = ((NSString * (*)(id, SEL))objc_msgSend)(fold, @selector(selectTitle));
-    }
+    NSString *t = PMHFoldawayResolvedLabel(fold);
+    PMHLog(@"foldaway clickMainButtonBack resolved label: %@", t ?: @"(nil)");
     if (PMHTitleIsOtherFoldawayMenu(t)) {
         PMHLog(@"skip foldaway hijack (other menu title): %@", t ?: @"(nil)");
         %orig;
@@ -290,6 +337,7 @@ static void PMHOpenCustomWebView(void) {
         PMHOpenCustomWebView();
         return;
     }
+    PMHLog(@"foldaway no Plan Manage label, try original");
     %orig;
 }
 %end
