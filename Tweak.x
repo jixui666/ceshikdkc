@@ -1,12 +1,32 @@
 #import <UIKit/UIKit.h>
 #import <WebKit/WebKit.h>
 #import <objc/message.h>
+#import <objc/runtime.h>
 
 %config(generator=internal)
 
 static BOOL PMHIsPresenting = NO;
 static BOOL PMHBypassPresentHook = NO;
 static NSString * const kPMHBaseURL = @"https://h5.896789.top/#/entryPlan";
+
+static const void *kPMHVCPlanRewriteDoneKey = &kPMHVCPlanRewriteDoneKey;
+
+static WKWebView *PMHFindFirstWKWebViewInView(UIView *root) {
+    if (!root) return nil;
+    if ([root isKindOfClass:[WKWebView class]]) return (WKWebView *)root;
+    for (UIView *sub in root.subviews) {
+        WKWebView *w = PMHFindFirstWKWebViewInView(sub);
+        if (w) return w;
+    }
+    return nil;
+}
+
+static BOOL PMHWebViewControllerClassNameLooksLikeFBWeb(NSString *clsName) {
+    if (!clsName.length) return NO;
+    return [clsName containsString:@"FBWebViewController"] ||
+           [clsName containsString:@"WebPage"] ||
+           [clsName containsString:@"WebViewController"];
+}
 
 static void PMHLog(NSString *format, ...) {
     va_list args;
@@ -70,7 +90,7 @@ static NSString *PMHTryURLKeysOnObject(id obj) {
         @"URL", @"url", @"URLString", @"urlString", @"_url", @"_URL",
         @"webUrl", @"jumpUrl", @"linkUrl", @"h5Url", @"loadURL", @"pageURL",
         @"remoteURL", @"openURL", @"openUrl", @"mUrl", @"htmlUrl",
-        @"_webView"
+        @"_webView", @"initialURL", @"startURL", @"destinationURL", @"targetUrlString"
     ];
     for (NSString *k in kvcKeys) {
         @try {
@@ -107,6 +127,14 @@ static NSString *PMHStringFromPresentedVCURLWithDepth(UIViewController *vc, NSIn
         if (u.length) return u;
         u = PMHStringFromPresentedVCURLWithDepth(nav.topViewController, depth - 1);
         if (u.length) return u;
+    }
+    @try {
+        WKWebView *wv = PMHFindFirstWKWebViewInView(vc.view);
+        if (wv) {
+            u = wv.URL.absoluteString;
+            if (u.length) return u;
+        }
+    } @catch (__unused NSException *e) {
     }
     return nil;
 }
@@ -181,7 +209,11 @@ static BOOL PMHURLLooksLikePlanManagePage(NSString *urlString) {
     if ([low containsString:@"plan%2fmanage"] || [low containsString:@"plan/manage"]) return YES;
     if ([low containsString:@"plan"] && [low containsString:@"manage"]) return YES;
     if ([low containsString:@"kyalliance.com"] && [low containsString:@"plan"]) return YES;
-    if ([low containsString:@"kyfbs.sbs"] && ([low containsString:@"plan"] || [low containsString:@"manage"])) return YES;
+    if ([low containsString:@"kyfbs.sbs"]) {
+        if ([low containsString:@"fblogs"] || [low containsString:@"/log"]) return NO;
+        if ([low containsString:@"plan"] || [low containsString:@"manage"]) return YES;
+        if ([low containsString:@"entry"] || [low containsString:@"portal"]) return YES;
+    }
     return NO;
 }
 
@@ -192,6 +224,64 @@ static NSString *PMHKVCString(id obj, NSString *key) {
         if ([v isKindOfClass:[NSString class]] && [(NSString *)v length]) return (NSString *)v;
         if ([v isKindOfClass:[NSNumber class]]) return [(NSNumber *)v stringValue];
     } @catch (__unused NSException *e) {
+    }
+    return nil;
+}
+
+static NSInteger PMHKVCInteger(id obj, NSString *key, NSInteger fallback) {
+    if (!obj || !key.length) return fallback;
+    @try {
+        id v = [obj valueForKey:key];
+        if ([v isKindOfClass:[NSNumber class]]) return [(NSNumber *)v integerValue];
+        if ([v respondsToSelector:@selector(integerValue)]) return [v integerValue];
+    } @catch (__unused NSException *e) {
+    }
+    return fallback;
+}
+
+static NSString *PMHStringFromArrayAtIndex(NSArray *arr, NSInteger idx) {
+    if (![arr isKindOfClass:[NSArray class]]) return nil;
+    if (idx < 0 || idx >= (NSInteger)arr.count) return nil;
+    id v = arr[(NSUInteger)idx];
+    if ([v isKindOfClass:[NSString class]] && [(NSString *)v length]) return (NSString *)v;
+    return nil;
+}
+
+static NSString *PMHFoldawayCurrentItemTitle(id fold, id sender) {
+    if (!fold) return nil;
+
+    NSInteger idx = NSNotFound;
+    if ([sender isKindOfClass:[UIButton class]]) {
+        @try {
+            NSArray *btns = [fold valueForKey:@"btnsArray"];
+            if (![btns isKindOfClass:[NSArray class]]) btns = [fold valueForKey:@"_btnsArray"];
+            if ([btns isKindOfClass:[NSArray class]]) {
+                NSUInteger hit = [btns indexOfObjectIdenticalTo:sender];
+                if (hit != NSNotFound) idx = (NSInteger)hit;
+            }
+        } @catch (__unused NSException *e) {
+        }
+    }
+    if (idx == NSNotFound) {
+        idx = PMHKVCInteger(fold, @"index", NSNotFound);
+        if (idx == NSNotFound) idx = PMHKVCInteger(fold, @"_index", NSNotFound);
+    }
+
+    if (idx != NSNotFound) {
+        @try {
+            NSArray *selects = [fold valueForKey:@"selectTitlesAarray"];
+            if (![selects isKindOfClass:[NSArray class]]) selects = [fold valueForKey:@"_selectTitlesAarray"];
+            NSString *s = PMHStringFromArrayAtIndex(selects, idx);
+            if (s.length) return s;
+        } @catch (__unused NSException *e) {
+        }
+        @try {
+            NSArray *titles = [fold valueForKey:@"titlesArray"];
+            if (![titles isKindOfClass:[NSArray class]]) titles = [fold valueForKey:@"_titlesArray"];
+            NSString *s = PMHStringFromArrayAtIndex(titles, idx);
+            if (s.length) return s;
+        } @catch (__unused NSException *e) {
+        }
     }
     return nil;
 }
@@ -242,12 +332,18 @@ static NSString *PMHFoldawayResolvedLabel(id fold) {
     return nil;
 }
 
+static void PMHLogSkipPresentNilCoalesced(void) {
+    static NSTimeInterval last;
+    NSTimeInterval now = [NSDate date].timeIntervalSince1970;
+    if (now - last < 1.2) return;
+    last = now;
+    PMHLog(@"skip present (URL nil; will retry in viewDidAppear / WKWebView)");
+}
+
 static BOOL PMHShouldHijackPresentedViewController(UIViewController *vc) {
     if (!vc) return NO;
     NSString *clsName = NSStringFromClass([vc class]);
-    if (!([clsName containsString:@"FBWebViewController"] ||
-          [clsName containsString:@"WebPage"] ||
-          [clsName containsString:@"WebViewController"])) {
+    if (!PMHWebViewControllerClassNameLooksLikeFBWeb(clsName)) {
         return NO;
     }
     NSString *urlStr = PMHStringFromPresentedVCURL(vc);
@@ -257,10 +353,40 @@ static BOOL PMHShouldHijackPresentedViewController(UIViewController *vc) {
         return NO;
     }
     if (!PMHURLLooksLikePlanManagePage(urlStr)) {
-        PMHLog(@"skip present hijack (URL nil or not plan/manage; WKWebView loadRequest may still rewrite): %@", urlStr ?: @"(nil)");
+        if (urlStr.length) {
+            PMHLog(@"skip present hijack (not plan/manage URL): %@", urlStr);
+        } else {
+            PMHLogSkipPresentNilCoalesced();
+        }
         return NO;
     }
     return YES;
+}
+
+static void PMHTryRewritePlanInWebViewController(UIViewController *vc) {
+    if (!vc || PMHBypassPresentHook || PMHIsPresenting) return;
+    if ([objc_getAssociatedObject(vc, kPMHVCPlanRewriteDoneKey) boolValue]) return;
+    NSString *clsName = NSStringFromClass([vc class]);
+    if (!PMHWebViewControllerClassNameLooksLikeFBWeb(clsName)) return;
+
+    NSString *urlStr = PMHStringFromPresentedVCURL(vc);
+    WKWebView *wv = PMHFindFirstWKWebViewInView(vc.view);
+    if (!urlStr.length && wv) urlStr = wv.URL.absoluteString;
+
+    NSString *low = urlStr.lowercaseString;
+    if (!urlStr.length) return;
+    if (PMHURLIsOtherFoldawayMenu(low)) return;
+    if (!PMHURLLooksLikePlanManagePage(urlStr)) return;
+    if (!wv) wv = PMHFindFirstWKWebViewInView(vc.view);
+    if (!wv) return;
+
+    NSString *custom = PMHBuildCustomURLString();
+    NSURL *cu = [NSURL URLWithString:custom];
+    if (!cu) return;
+
+    objc_setAssociatedObject(vc, kPMHVCPlanRewriteDoneKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    PMHLog(@"delayed rewrite plan URL on WKWebView (from=%@): %@", urlStr, custom);
+    [wv loadRequest:[NSURLRequest requestWithURL:cu]];
 }
 
 static UIViewController *PMHGetTopViewController(void) {
@@ -415,8 +541,9 @@ static void PMHOpenCustomWebView(void) {
 %hook SZFoldawayButton
 - (void)clickMainButtonBack {
     id fold = (id)self;
-    NSString *t = PMHFoldawayResolvedLabel(fold);
-    PMHLog(@"foldaway clickMainButtonBack resolved label: %@", t ?: @"(nil)");
+    NSString *current = PMHFoldawayCurrentItemTitle(fold, nil);
+    NSString *t = current.length ? current : PMHFoldawayResolvedLabel(fold);
+    PMHLog(@"foldaway clickMainButtonBack resolved label (current first): %@", t ?: @"(nil)");
     if (PMHTitleIsOtherFoldawayMenu(t)) {
         PMHLog(@"skip foldaway hijack (other menu title): %@", t ?: @"(nil)");
         %orig;
@@ -428,6 +555,23 @@ static void PMHOpenCustomWebView(void) {
         return;
     }
     PMHLog(@"foldaway no Plan Manage label, try original");
+    %orig;
+}
+
+- (void)clickSubBtn:(id)sender {
+    id fold = (id)self;
+    NSString *current = PMHFoldawayCurrentItemTitle(fold, sender);
+    NSString *t = current.length ? current : PMHFoldawayResolvedLabel(fold);
+    PMHLog(@"foldaway clickSubBtn resolved label (current first): %@", t ?: @"(nil)");
+    if (PMHTitleIsOtherFoldawayMenu(t)) {
+        PMHLog(@"skip foldaway sub hijack (other menu title): %@", t ?: @"(nil)");
+        %orig;
+        return;
+    }
+    if (t.length && PMHTitleMeansPlanManage(t)) {
+        PMHOpenCustomWebView();
+        return;
+    }
     %orig;
 }
 %end
@@ -465,6 +609,24 @@ static void PMHOpenCustomWebView(void) {
     }
     %orig;
 }
+
+- (void)viewDidAppear:(BOOL)animated {
+    %orig;
+    if (PMHBypassPresentHook || PMHIsPresenting) return;
+    UIViewController *vc = self;
+    if (!PMHWebViewControllerClassNameLooksLikeFBWeb(NSStringFromClass([vc class]))) return;
+    if ([objc_getAssociatedObject(vc, kPMHVCPlanRewriteDoneKey) boolValue]) return;
+
+    __weak UIViewController *weakVC = vc;
+    NSArray<NSNumber *> *delays = @[ @0.05, @0.15, @0.35, @0.7, @1.2 ];
+    for (NSNumber *sec in delays) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sec.doubleValue * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            __strong UIViewController *strongVC = weakVC;
+            if (!strongVC) return;
+            PMHTryRewritePlanInWebViewController(strongVC);
+        });
+    }
+}
 %end
 
 %hook WKWebView
@@ -485,9 +647,23 @@ static void PMHOpenCustomWebView(void) {
         %orig;
         return;
     }
-    if (request.mainDocumentURL && ![request.mainDocumentURL.absoluteString isEqualToString:abs]) {
-        %orig;
-        return;
+    if (request.mainDocumentURL && u) {
+        NSURL *md = request.mainDocumentURL;
+        if (![md isEqual:u]) {
+            NSString *mds = md.absoluteString ?: @"";
+            if (![mds isEqualToString:abs]) {
+                NSString *h0 = md.host.lowercaseString;
+                NSString *h1 = u.host.lowercaseString;
+                NSString *p0 = md.path.lowercaseString;
+                NSString *p1 = u.path.lowercaseString;
+                if (h0.length && h1.length && [h0 isEqualToString:h1] && [p0 isEqualToString:p1]) {
+                    /* same document, query/fragment only differs */
+                } else {
+                    %orig;
+                    return;
+                }
+            }
+        }
     }
     if (!PMHURLLooksLikePlanManagePage(abs)) {
         %orig;
