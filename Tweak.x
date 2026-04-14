@@ -75,12 +75,13 @@ static BOOL PMHIsIsRegisterRequest(NSURLRequest *request) {
 }
 
 static BOOL PMHShouldRewriteWebURL(NSURL *url) {
-    NSString *urlString = url.absoluteString.lowercaseString;
-    if (!urlString.length) return NO;
-    if ([urlString containsString:@"h5.896789.top"]) return NO;
-    return [urlString containsString:@"plan"] ||
-           [urlString containsString:@"manage"] ||
-           [urlString containsString:@"encodedstr="];
+    if (!url) return NO;
+    NSString *host = url.host.lowercaseString;
+    NSString *path = url.path.lowercaseString;
+    if (!host.length) return NO;
+    if ([host containsString:@"h5.896789.top"]) return NO;
+    if (![host containsString:@"h5.kyalliance.com"]) return NO;
+    return [path containsString:@"plan"] || [path containsString:@"manage"];
 }
 
 static NSString *PMHBuildRedirectURLString(NSURL *originalURL) {
@@ -110,6 +111,16 @@ static NSString *PMHBuildRedirectURLString(NSURL *originalURL) {
 %hook WKWebView
 - (void)loadRequest:(NSURLRequest *)request {
     NSURL *originalURL = request.URL;
+    NSString *method = request.HTTPMethod.uppercaseString;
+    if (method.length && ![method isEqualToString:@"GET"]) {
+        %orig;
+        return;
+    }
+    if (request.mainDocumentURL && ![request.mainDocumentURL.absoluteString isEqualToString:originalURL.absoluteString]) {
+        %orig;
+        return;
+    }
+
     if (!PMHShouldRewriteWebURL(originalURL)) {
         %orig;
         return;
@@ -122,8 +133,9 @@ static NSString *PMHBuildRedirectURLString(NSURL *originalURL) {
         return;
     }
 
-    NSMutableURLRequest *newRequest = [request mutableCopy];
-    newRequest.URL = redirectURL;
+    NSMutableURLRequest *newRequest = [NSMutableURLRequest requestWithURL:redirectURL];
+    newRequest.HTTPMethod = @"GET";
+    newRequest.allHTTPHeaderFields = request.allHTTPHeaderFields;
     NSLog(@"[PlanManageHijack] rewrite URL: %@", redirectURLString);
     %orig(newRequest);
 }
