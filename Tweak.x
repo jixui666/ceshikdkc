@@ -72,6 +72,8 @@ static BOOL PMHTitleIsOtherFoldawayMenu(NSString *t) {
 static BOOL PMHURLIsOtherFoldawayMenu(NSString *low) {
     if (!low.length) return NO;
     if ([low containsString:@"advertisecenter"]) return YES;
+    if ([low containsString:@"advertise-center"] || [low containsString:@"advertise_center"]) return YES;
+    if ([low containsString:@"#/advertise"]) return YES;
     if ([low containsString:@"/advertise"]) return YES;
     if ([low containsString:@"adnetwork"]) return YES;
     if ([low containsString:@"exchange"]) return YES;
@@ -102,7 +104,7 @@ static BOOL PMHShouldHijackPresentedViewController(UIViewController *vc) {
     NSString *urlStr = PMHStringFromPresentedVCURL(vc);
     NSString *low = urlStr.lowercaseString;
     if (PMHURLIsOtherFoldawayMenu(low)) {
-        PMHLog(@"skip present hijack (other menu URL): %@", urlStr ?: @"(nil)");
+        PMHLog(@"skip present hijack (native flow e.g. Ad Network -> advertiseCenter): %@", urlStr ?: @"(nil)");
         return NO;
     }
     if (!PMHURLLooksLikePlanManagePage(urlStr)) {
