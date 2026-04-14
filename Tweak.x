@@ -64,7 +64,7 @@ static NSString *PMHBuildCustomURLString(NSString *originalURLString) {
 static NSString *PMHExtractURLStringFromValue(id value) {
     if (!value) return nil;
     if ([value isKindOfClass:[NSURL class]]) return [(NSURL *)value absoluteString];
-    if ([value isKindOfClass:[NSURLRequest class]]) return [(NSURLRequest *)value.URL absoluteString];
+    if ([value isKindOfClass:[NSURLRequest class]]) return [((NSURLRequest *)value).URL absoluteString];
     if ([value isKindOfClass:[NSString class]]) return (NSString *)value;
     return nil;
 }
