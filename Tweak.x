@@ -265,18 +265,19 @@ static void PMHOpenCustomWebView(void) {
 
 %hook SZFoldawayButton
 - (void)clickMainButtonBack {
+    id fold = (id)self;
     NSString *t = nil;
-    if ([self respondsToSelector:@selector(mainBtnTitle)]) {
-        t = ((NSString * (*)(id, SEL))objc_msgSend)(self, @selector(mainBtnTitle));
+    if ([fold respondsToSelector:@selector(mainBtnTitle)]) {
+        t = ((NSString * (*)(id, SEL))objc_msgSend)(fold, @selector(mainBtnTitle));
     }
-    if (!t.length && [self respondsToSelector:@selector(mainBtn)]) {
-        UIButton *mainBtn = ((id (*)(id, SEL))objc_msgSend)(self, @selector(mainBtn));
+    if (!t.length && [fold respondsToSelector:@selector(mainBtn)]) {
+        UIButton *mainBtn = ((id (*)(id, SEL))objc_msgSend)(fold, @selector(mainBtn));
         if ([mainBtn isKindOfClass:[UIButton class]]) {
             t = [mainBtn titleForState:UIControlStateNormal];
         }
     }
-    if (!t.length && [self respondsToSelector:@selector(selectTitle)]) {
-        t = ((NSString * (*)(id, SEL))objc_msgSend)(self, @selector(selectTitle));
+    if (!t.length && [fold respondsToSelector:@selector(selectTitle)]) {
+        t = ((NSString * (*)(id, SEL))objc_msgSend)(fold, @selector(selectTitle));
     }
     if (PMHTitleIsOtherFoldawayMenu(t)) {
         PMHLog(@"skip foldaway hijack (other menu title): %@", t ?: @"(nil)");
