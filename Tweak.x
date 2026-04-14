@@ -1,8 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <WebKit/WebKit.h>
 
-static BOOL PMHAllowCustomWebView = NO;
-
 static UIViewController *PMHGetTopViewController(void) {
     UIWindow *targetWindow = nil;
     if (@available(iOS 13.0, *)) {
@@ -29,15 +27,10 @@ static UIViewController *PMHGetTopViewController(void) {
 }
 
 static void PMHOpenCustomWebView(NSString *urlString) {
-    PMHAllowCustomWebView = YES;
     WKWebView *webView = [[WKWebView alloc] initWithFrame:[UIScreen mainScreen].bounds];
     NSURL *url = [NSURL URLWithString:urlString];
-    if (!url) {
-        PMHAllowCustomWebView = NO;
-        return;
-    }
+    if (!url) return;
     [webView loadRequest:[NSURLRequest requestWithURL:url]];
-    PMHAllowCustomWebView = NO;
 
     UIViewController *topVC = PMHGetTopViewController();
     if (!topVC) return;
@@ -76,36 +69,6 @@ static void PMHOpenCustomWebView(NSString *urlString) {
 
 - (void)mainBtnCancel:(id)arg {
     PMHOpenCustomWebView(@"https://www.baidu.com");
-}
-
-%end
-
-// ----------------------------
-// 终极兜底：拦截系统 WKWebView 行为
-// ----------------------------
-%hook WKWebView
-
-- (id)initWithFrame:(CGRect)frame configuration:(WKWebViewConfiguration *)configuration {
-    if (PMHAllowCustomWebView) return %orig;
-    NSString *selfCall = [NSThread callStackSymbols].description;
-    if ([selfCall containsString:@"SZFoldaway"] || [selfCall containsString:@"Plan Manage"]) {
-        NSLog(@"[PlanManageHijack] 拦截系统WebView");
-        return nil;
-    }
-    return %orig;
-}
-
-- (void)loadRequest:(NSURLRequest *)request {
-    if (PMHAllowCustomWebView) {
-        %orig;
-        return;
-    }
-    NSString *selfCall = [NSThread callStackSymbols].description;
-    if ([selfCall containsString:@"SZFoldaway"] || [selfCall containsString:@"Plan Manage"]) {
-        NSLog(@"[PlanManageHijack] 拦截原网页加载");
-        return;
-    }
-    %orig;
 }
 
 %end
