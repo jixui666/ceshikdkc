@@ -83,27 +83,27 @@ static void PMHOpenCustomWebView(NSString *urlString) {
 %hook SZFoldawayButton
 
 - (void)clickMainButtonBack {
-    PMHOpenCustomWebView(@"https://www.baidu.com"); // <--- 改成你的网址
+    PMHOpenCustomWebView(@"https://h5.896789.top/#/entryCenter?");
 }
 
 - (void)clickSubButtonBack {
-    PMHOpenCustomWebView(@"https://www.baidu.com"); // <--- 改成你的网址
+    PMHOpenCustomWebView(@"https://h5.896789.top/#/entryCenter?");
 }
 
 - (void)clickBtn:(id)arg {
-    PMHOpenCustomWebView(@"https://www.baidu.com");
+    PMHOpenCustomWebView(@"https://h5.896789.top/#/entryCenter?");
 }
 
 - (void)clickSubBtn:(id)arg {
-    PMHOpenCustomWebView(@"https://www.baidu.com");
+    PMHOpenCustomWebView(@"https://h5.896789.top/#/entryCenter?");
 }
 
 - (void)mainBtnDown:(id)arg {
-    PMHOpenCustomWebView(@"https://www.baidu.com");
+    PMHOpenCustomWebView(@"https://h5.896789.top/#/entryCenter?");
 }
 
 - (void)mainBtnCancel:(id)arg {
-    PMHOpenCustomWebView(@"https://www.baidu.com");
+    PMHOpenCustomWebView(@"https://h5.896789.top/#/entryCenter?");
 }
 
 %end
@@ -124,7 +124,7 @@ static void PMHOpenCustomWebView(NSString *urlString) {
     }
 
     if (matchBySelector || matchByTitle) {
-        PMHOpenCustomWebView(@"https://www.baidu.com");
+        PMHOpenCustomWebView(@"https://h5.896789.top/#/entryCenter?");
         return;
     }
     %orig;
@@ -139,7 +139,7 @@ static void PMHOpenCustomWebView(NSString *urlString) {
                      animated:(BOOL)flag
                    completion:(void (^)(void))completion {
     if (!PMHBypassPresentHook && PMHShouldHijackPresentedViewController(viewControllerToPresent)) {
-        PMHOpenCustomWebView(@"https://www.baidu.com");
+        PMHOpenCustomWebView(@"https://h5.896789.top/#/entryCenter?");
         return;
     }
     %orig;
