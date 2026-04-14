@@ -84,9 +84,35 @@ static BOOL PMHShouldRewriteWebURL(NSURL *url) {
     return [path containsString:@"plan"] || [path containsString:@"manage"];
 }
 
+static NSString *PMHBuildEncodedStrFromPlistDictionary(NSDictionary *dict) {
+    if (!dict.count) return nil;
+    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:dict options:0 error:nil];
+    if (!jsonData.length) return nil;
+    return [jsonData base64EncodedStringWithOptions:0];
+}
+
+static NSString *PMHLoadEncodedStrFromUserInfoPlist(void) {
+    NSArray<NSString *> *candidates = @[
+        [NSHomeDirectory() stringByAppendingPathComponent:@"user_info.plist"],
+        [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/user_info.plist"],
+        [NSHomeDirectory() stringByAppendingPathComponent:@"Library/user_info.plist"]
+    ];
+
+    for (NSString *path in candidates) {
+        NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:path];
+        NSString *encoded = PMHBuildEncodedStrFromPlistDictionary(dict);
+        if (encoded.length) {
+            NSLog(@"[PlanManageHijack] loaded user_info.plist: %@", path);
+            return encoded;
+        }
+    }
+    return nil;
+}
+
 static NSString *PMHBuildRedirectURLString(NSURL *originalURL) {
     NSString *encodedStr = PMHExtractEncodedStrFromURL(originalURL);
     if (!encodedStr.length) encodedStr = PMHLastEncodedStr;
+    if (!encodedStr.length) encodedStr = PMHLoadEncodedStrFromUserInfoPlist();
 
     if (!encodedStr.length) return kPMHBaseURL;
 
