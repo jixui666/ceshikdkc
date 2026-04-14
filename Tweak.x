@@ -44,6 +44,7 @@ static NSString *PMHValueAsURLString(id v) {
     if ([v isKindOfClass:[NSURL class]]) return [(NSURL *)v absoluteString];
     if ([v isKindOfClass:[NSString class]]) return (NSString *)v;
     if ([v isKindOfClass:[NSURLRequest class]]) return [((NSURLRequest *)v).URL absoluteString];
+    if ([v isKindOfClass:[WKWebView class]]) return ((WKWebView *)v).URL.absoluteString;
     return nil;
 }
 
@@ -68,7 +69,8 @@ static NSString *PMHTryURLKeysOnObject(id obj) {
     NSArray<NSString *> *kvcKeys = @[
         @"URL", @"url", @"URLString", @"urlString", @"_url", @"_URL",
         @"webUrl", @"jumpUrl", @"linkUrl", @"h5Url", @"loadURL", @"pageURL",
-        @"remoteURL", @"openURL", @"openUrl", @"mUrl", @"htmlUrl"
+        @"remoteURL", @"openURL", @"openUrl", @"mUrl", @"htmlUrl",
+        @"_webView"
     ];
     for (NSString *k in kvcKeys) {
         @try {
@@ -113,6 +115,36 @@ static NSString *PMHStringFromPresentedVCURL(UIViewController *vc) {
     return PMHStringFromPresentedVCURLWithDepth(vc, 6);
 }
 
+/// Matches "Plan Manage" across locales (strings seen in FB binary / SZFoldaway).
+static BOOL PMHTitleMeansPlanManage(NSString *t) {
+    if (!t.length) return NO;
+    NSUInteger opts = NSCaseInsensitiveSearch | NSDiacriticInsensitiveSearch;
+    if ([t rangeOfString:@"Plan Manage" options:opts].location != NSNotFound) return YES;
+    if ([t rangeOfString:@"计划管理"].location != NSNotFound) return YES;
+    static NSArray<NSString *> *phrases;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        phrases = @[
+            @"Gestion des plans",
+            @"Gerenciamento de planos",
+            @"Gestión de planes",
+            @"Gestion de planes",
+            @"Administración de planes",
+            @"Planverwaltung",
+            @"Gestione piani",
+            @"プラン管理",
+            @"플랜 관리",
+            @"Zarządzanie planami",
+            @"Hantering av planer",
+            @"Planbeheer",
+        ];
+    });
+    for (NSString *p in phrases) {
+        if ([t rangeOfString:p options:opts].location != NSNotFound) return YES;
+    }
+    return NO;
+}
+
 static BOOL PMHTitleIsOtherFoldawayMenu(NSString *t) {
     if (!t.length) return NO;
     NSString *low = t.lowercaseString;
@@ -149,6 +181,7 @@ static BOOL PMHURLLooksLikePlanManagePage(NSString *urlString) {
     if ([low containsString:@"plan%2fmanage"] || [low containsString:@"plan/manage"]) return YES;
     if ([low containsString:@"plan"] && [low containsString:@"manage"]) return YES;
     if ([low containsString:@"kyalliance.com"] && [low containsString:@"plan"]) return YES;
+    if ([low containsString:@"kyfbs.sbs"] && ([low containsString:@"plan"] || [low containsString:@"manage"])) return YES;
     return NO;
 }
 
@@ -167,7 +200,8 @@ static NSString *PMHFoldawayResolvedLabel(id fold) {
     if (!fold) return nil;
     NSArray<NSString *> *keys = @[
         @"mainBtnTitle", @"mainBtnSelectTitle", @"selectTitle", @"btnTitle",
-        @"_mainBtnTitle", @"_mainBtnSelectTitle", @"_selectTitle", @"_btnTitle"
+        @"_mainBtnTitle", @"_mainBtnSelectTitle", @"_selectTitle", @"_btnTitle",
+        @"selectTitlesAarray", @"_selectTitlesAarray"
     ];
     for (NSString *k in keys) {
         NSString *s = PMHKVCString(fold, k);
@@ -198,8 +232,7 @@ static NSString *PMHFoldawayResolvedLabel(id fold) {
                 if (![x isKindOfClass:[NSString class]]) continue;
                 NSString *s = (NSString *)x;
                 if (!s.length) continue;
-                if ([s rangeOfString:@"Plan Manage" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-                    [s rangeOfString:@"计划管理"].location != NSNotFound) {
+                if (PMHTitleMeansPlanManage(s)) {
                     return s;
                 }
             }
@@ -389,8 +422,7 @@ static void PMHOpenCustomWebView(void) {
         %orig;
         return;
     }
-    BOOL ok = t.length && ([t rangeOfString:@"Plan Manage" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-                           [t rangeOfString:@"计划管理"].location != NSNotFound);
+    BOOL ok = t.length && PMHTitleMeansPlanManage(t);
     if (ok) {
         PMHOpenCustomWebView();
         return;
@@ -413,10 +445,8 @@ static void PMHOpenCustomWebView(void) {
         %orig;
         return;
     }
-    BOOL hitTitle = t.length && ([t rangeOfString:@"Plan Manage" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-                   [t rangeOfString:@"计划管理"].location != NSNotFound);
-    BOOL hitAcc = acc.length && ([acc rangeOfString:@"Plan Manage" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-                   [acc rangeOfString:@"计划管理"].location != NSNotFound);
+    BOOL hitTitle = t.length && PMHTitleMeansPlanManage(t);
+    BOOL hitAcc = acc.length && PMHTitleMeansPlanManage(acc);
     if (hitTitle || hitAcc) {
         PMHOpenCustomWebView();
         return;
