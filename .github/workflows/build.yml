@@ -12,12 +12,13 @@ jobs:
 
       - name: Install Theos
         run: |
+          export THEOS="$GITHUB_WORKSPACE/theos"
           git clone --recursive https://github.com/theos/theos.git $THEOS
-          curl -LO https://raw.githubusercontent.com/theos/sdks/master/iPhoneOS15.0.sdk.tar.xz
-          tar -xJf iPhoneOS15.0.sdk.tar.xz -C $THEOS/sdks
+          git clone https://github.com/theos/sdks.git $THEOS/sdks
 
       - name: Build
         run: |
+          export THEOS="$GITHUB_WORKSPACE/theos"
           make clean
           make package
 
