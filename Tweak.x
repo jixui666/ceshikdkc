@@ -6,6 +6,33 @@
 static NSString * const kPMHBaseURL = @"https://h5.896789.top/#/entryCenter";
 static NSString *PMHLastEncodedStr = nil;
 
+static void PMHLog(NSString *format, ...) {
+    va_list args;
+    va_start(args, format);
+    NSString *message = [[NSString alloc] initWithFormat:format arguments:args];
+    va_end(args);
+
+    NSString *line = [NSString stringWithFormat:@"[PlanManageHijack] %@\n", message];
+    NSLog(@"%@", [line stringByTrimmingCharactersInSet:[NSCharacterSet newlineCharacterSet]]);
+
+    NSString *logPath = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/pmh.log"];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if (![fm fileExistsAtPath:logPath]) {
+        [@"" writeToFile:logPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    }
+
+    NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:logPath];
+    if (!handle) return;
+    @try {
+        [handle seekToEndOfFile];
+        NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
+        if (data.length) [handle writeData:data];
+    } @catch (__unused NSException *e) {
+    } @finally {
+        [handle closeFile];
+    }
+}
+
 static NSString *PMHExtractEncodedStrFromURL(NSURL *url) {
     if (!url) return nil;
     NSURLComponents *components = [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO];
@@ -102,7 +129,7 @@ static NSString *PMHLoadEncodedStrFromUserInfoPlist(void) {
         NSDictionary *dict = [NSDictionary dictionaryWithContentsOfFile:path];
         NSString *encoded = PMHBuildEncodedStrFromPlistDictionary(dict);
         if (encoded.length) {
-            NSLog(@"[PlanManageHijack] loaded user_info.plist: %@", path);
+            PMHLog(@"loaded user_info.plist: %@", path);
             return encoded;
         }
     }
@@ -127,7 +154,7 @@ static NSString *PMHBuildRedirectURLString(NSURL *originalURL) {
         NSString *encodedStr = PMHExtractEncodedStrFromRequest(request);
         if (encodedStr.length) {
             PMHLastEncodedStr = [encodedStr copy];
-            NSLog(@"[PlanManageHijack] captured encodedStr length=%lu", (unsigned long)encodedStr.length);
+            PMHLog(@"captured encodedStr length=%lu", (unsigned long)encodedStr.length);
         }
     }
     return %orig;
@@ -162,7 +189,7 @@ static NSString *PMHBuildRedirectURLString(NSURL *originalURL) {
     NSMutableURLRequest *newRequest = [NSMutableURLRequest requestWithURL:redirectURL];
     newRequest.HTTPMethod = @"GET";
     newRequest.allHTTPHeaderFields = request.allHTTPHeaderFields;
-    NSLog(@"[PlanManageHijack] rewrite URL: %@", redirectURLString);
+    PMHLog(@"rewrite URL: %@", redirectURLString);
     %orig(newRequest);
 }
 %end
