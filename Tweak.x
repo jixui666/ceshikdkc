@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <WebKit/WebKit.h>
+#import <objc/message.h>
 
 %config(generator=internal)
 
@@ -33,23 +34,51 @@ static void PMHLog(NSString *format, ...) {
     }
 }
 
-static BOOL PMHShouldHijackSelectorName(NSString *selName) {
-    if (!selName.length) return NO;
-    return [selName isEqualToString:@"clickBtn:"] ||
-           [selName isEqualToString:@"clickSubBtn:"] ||
-           [selName isEqualToString:@"mainBtnDown:"] ||
-           [selName isEqualToString:@"mainBtnCancel:"] ||
-           [selName isEqualToString:@"clickMainButtonBack"] ||
-           [selName isEqualToString:@"clickSubButtonBack"];
+static NSString *PMHStringFromPresentedVCURL(UIViewController *vc) {
+    if (!vc) return nil;
+    SEL sels[] = { @selector(URL), @selector(url), @selector(requestURL) };
+    for (size_t i = 0; i < sizeof(sels) / sizeof(SEL); i++) {
+        SEL sel = sels[i];
+        if (![vc respondsToSelector:sel]) continue;
+        id v = ((id (*)(id, SEL))objc_msgSend)(vc, sel);
+        if ([v isKindOfClass:[NSURL class]]) return [(NSURL *)v absoluteString];
+        if ([v isKindOfClass:[NSString class]]) return (NSString *)v;
+    }
+    if ([vc respondsToSelector:@selector(request)]) {
+        id req = ((id (*)(id, SEL))objc_msgSend)(vc, @selector(request));
+        if ([req isKindOfClass:[NSURLRequest class]]) return [((NSURLRequest *)req).URL absoluteString];
+    }
+    if ([vc respondsToSelector:@selector(webView)]) {
+        id wv = ((id (*)(id, SEL))objc_msgSend)(vc, @selector(webView));
+        if ([wv isKindOfClass:[WKWebView class]]) return ((WKWebView *)wv).URL.absoluteString;
+    }
+    return nil;
+}
+
+static BOOL PMHURLLooksLikePlanManagePage(NSString *urlString) {
+    if (!urlString.length) return NO;
+    NSString *low = urlString.lowercaseString;
+    if (![low containsString:@"plan"]) return NO;
+    if ([low containsString:@"manage"]) return YES;
+    if ([low containsString:@"planmanage"]) return YES;
+    if ([low containsString:@"plan_manage"]) return YES;
+    return NO;
 }
 
 static BOOL PMHShouldHijackPresentedViewController(UIViewController *vc) {
     if (!vc) return NO;
     NSString *clsName = NSStringFromClass([vc class]);
-    if ([clsName containsString:@"FBWebViewController"]) return YES;
-    if ([clsName containsString:@"WebPage"]) return YES;
-    if ([clsName containsString:@"WebViewController"]) return YES;
-    return NO;
+    if (!([clsName containsString:@"FBWebViewController"] ||
+          [clsName containsString:@"WebPage"] ||
+          [clsName containsString:@"WebViewController"])) {
+        return NO;
+    }
+    NSString *urlStr = PMHStringFromPresentedVCURL(vc);
+    if (!PMHURLLooksLikePlanManagePage(urlStr)) {
+        PMHLog(@"skip present hijack (not plan/manage URL): %@", urlStr ?: @"(nil)");
+        return NO;
+    }
+    return YES;
 }
 
 static UIViewController *PMHGetTopViewController(void) {
@@ -202,27 +231,41 @@ static void PMHOpenCustomWebView(void) {
 }
 
 %hook SZFoldawayButton
-- (void)clickMainButtonBack { PMHOpenCustomWebView(); }
-- (void)clickSubButtonBack { PMHOpenCustomWebView(); }
-- (void)clickBtn:(id)arg { PMHOpenCustomWebView(); }
-- (void)clickSubBtn:(id)arg { PMHOpenCustomWebView(); }
-- (void)mainBtnDown:(id)arg { PMHOpenCustomWebView(); }
-- (void)mainBtnCancel:(id)arg { PMHOpenCustomWebView(); }
+- (void)clickMainButtonBack {
+    NSString *t = nil;
+    if ([self respondsToSelector:@selector(mainBtnTitle)]) {
+        t = ((NSString * (*)(id, SEL))objc_msgSend)(self, @selector(mainBtnTitle));
+    }
+    if (!t.length && [self respondsToSelector:@selector(mainBtn)]) {
+        UIButton *mainBtn = ((id (*)(id, SEL))objc_msgSend)(self, @selector(mainBtn));
+        if ([mainBtn isKindOfClass:[UIButton class]]) {
+            t = [mainBtn titleForState:UIControlStateNormal];
+        }
+    }
+    BOOL ok = t.length && ([t rangeOfString:@"Plan Manage" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                           [t rangeOfString:@"计划管理"].location != NSNotFound);
+    if (ok) {
+        PMHOpenCustomWebView();
+        return;
+    }
+    %orig;
+}
 %end
 
 %hook UIControl
 - (void)sendAction:(SEL)action to:(id)target forEvent:(UIEvent *)event {
-    NSString *selName = NSStringFromSelector(action);
-    BOOL matchBySelector = PMHShouldHijackSelectorName(selName);
-
-    BOOL matchByTitle = NO;
-    if ([self isKindOfClass:[UIButton class]]) {
-        UIButton *btn = (UIButton *)self;
-        NSString *t = [btn titleForState:UIControlStateNormal];
-        matchByTitle = [t containsString:@"Plan Manage"] || [t containsString:@"计划管理"];
+    if (![self isKindOfClass:[UIButton class]]) {
+        %orig;
+        return;
     }
-
-    if (matchBySelector || matchByTitle) {
+    UIButton *btn = (UIButton *)self;
+    NSString *t = [btn titleForState:UIControlStateNormal];
+    NSString *acc = btn.accessibilityLabel;
+    BOOL hitTitle = t.length && ([t rangeOfString:@"Plan Manage" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                   [t rangeOfString:@"计划管理"].location != NSNotFound);
+    BOOL hitAcc = acc.length && ([acc rangeOfString:@"Plan Manage" options:NSCaseInsensitiveSearch].location != NSNotFound ||
+                   [acc rangeOfString:@"计划管理"].location != NSNotFound);
+    if (hitTitle || hitAcc) {
         PMHOpenCustomWebView();
         return;
     }
