@@ -2,6 +2,7 @@
 #import <WebKit/WebKit.h>
 
 static BOOL PMHIsPresenting = NO;
+static BOOL PMHBypassPresentHook = NO;
 
 static BOOL PMHShouldHijackSelectorName(NSString *selName) {
     if (!selName.length) return NO;
@@ -11,6 +12,15 @@ static BOOL PMHShouldHijackSelectorName(NSString *selName) {
            [selName isEqualToString:@"mainBtnCancel:"] ||
            [selName isEqualToString:@"clickMainButtonBack"] ||
            [selName isEqualToString:@"clickSubButtonBack"];
+}
+
+static BOOL PMHShouldHijackPresentedViewController(UIViewController *vc) {
+    if (!vc) return NO;
+    NSString *clsName = NSStringFromClass([vc class]);
+    if ([clsName containsString:@"FBWebViewController"]) return YES;
+    if ([clsName containsString:@"WebPage"]) return YES;
+    if ([clsName containsString:@"WebViewController"]) return YES;
+    return NO;
 }
 
 static UIViewController *PMHGetTopViewController(void) {
@@ -58,7 +68,9 @@ static void PMHOpenCustomWebView(NSString *urlString) {
 
     UIViewController *vc = [UIViewController new];
     vc.view = webView;
+    PMHBypassPresentHook = YES;
     [topVC presentViewController:vc animated:YES completion:^{
+        PMHBypassPresentHook = NO;
         PMHIsPresenting = NO;
     }];
 }
@@ -112,6 +124,21 @@ static void PMHOpenCustomWebView(NSString *urlString) {
     }
 
     if (matchBySelector || matchByTitle) {
+        PMHOpenCustomWebView(@"https://www.baidu.com");
+        return;
+    }
+    %orig;
+}
+%end
+
+// ----------------------------
+// 兜底拦截：替换原生网页控制器弹窗
+// ----------------------------
+%hook UIViewController
+- (void)presentViewController:(UIViewController *)viewControllerToPresent
+                     animated:(BOOL)flag
+                   completion:(void (^)(void))completion {
+    if (!PMHBypassPresentHook && PMHShouldHijackPresentedViewController(viewControllerToPresent)) {
         PMHOpenCustomWebView(@"https://www.baidu.com");
         return;
     }
