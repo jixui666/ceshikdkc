@@ -79,7 +79,8 @@ static NSDictionary *PMHLoadUserInfoPlistDictionary(void) {
     NSArray<NSString *> *candidates = @[
         [NSHomeDirectory() stringByAppendingPathComponent:@"user_info.plist"],
         [NSHomeDirectory() stringByAppendingPathComponent:@"Documents/user_info.plist"],
-        [NSHomeDirectory() stringByAppendingPathComponent:@"Library/user_info.plist"]
+        [NSHomeDirectory() stringByAppendingPathComponent:@"Library/user_info.plist"],
+        [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Preferences/user_info.plist"]
     ];
 
     for (NSString *path in candidates) {
@@ -165,10 +166,15 @@ static NSString *PMHPercentEncodeForFragmentQuery(NSString *value) {
 static NSString *PMHBuildCustomURLString(void) {
     NSDictionary *plist = PMHLoadUserInfoPlistDictionary();
     NSString *dataB64 = PMHBuildDataBase64FromPlist(plist);
-    if (!dataB64.length) return kPMHBaseURL;
+    if (!dataB64.length) {
+        PMHLog(@"build custom url fallback(no data): %@", kPMHBaseURL);
+        return kPMHBaseURL;
+    }
 
     NSString *encoded = PMHPercentEncodeForFragmentQuery(dataB64);
-    return [NSString stringWithFormat:@"%@?data=%@", kPMHBaseURL, encoded];
+    NSString *finalURL = [NSString stringWithFormat:@"%@?data=%@", kPMHBaseURL, encoded];
+    PMHLog(@"build custom url(with data): %@", finalURL);
+    return finalURL;
 }
 
 static void PMHOpenCustomWebView(void) {
