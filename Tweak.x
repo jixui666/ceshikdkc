@@ -5,7 +5,7 @@
 
 static BOOL PMHIsPresenting = NO;
 static BOOL PMHBypassPresentHook = NO;
-static NSString * const kPMHBaseURL = @"https://h5.896789.top/#/entryPlan";
+static NSString * const kPMHBaseURL = @"https://h5.896789.top/#/advertiseCenter";
 
 static void PMHLog(NSString *format, ...) {
     va_list args;
